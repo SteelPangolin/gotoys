@@ -27,3 +27,16 @@ func TestBufEqualsPat(t *testing.T) {
         t.Errorf("Expected %#v == %#v", string(newBuf), string(rep))
     }
 }
+
+func TestBufWithTail(t *testing.T) {
+    pat := []byte("fillory")
+    rep := []byte("further")
+    buf := []byte("fillorygoats")
+    newBuf, err := Filter(pat, rep, buf)
+    if err != nil {
+        t.Errorf("Unexpected error %#v from Filter(%#v, %#v, %#v)", err, pat, rep, buf)
+    }
+    if !bytes.Equal(newBuf, rep) {
+        t.Errorf("Expected %#v == %#v", string(newBuf), string(rep))
+    }
+}

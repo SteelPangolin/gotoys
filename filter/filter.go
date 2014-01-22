@@ -6,37 +6,46 @@ import (
     "container/list"
 )
 
-func ReplaceToChan(pat []byte, rep []byte, buf []byte, ch chan<- []byte) {
-    // TODO: reduce variable count: use sliceStart == -1 instead of sliceOpen
-    sliceOpen := false
-    sliceStart := 0
+const noSlice = -1 // slice is not open
+
+func ReplaceToChan(pat []byte, rep []byte, buf []byte, out chan<- []byte, tailReturn chan<- []byte) {
+    sliceStart := noSlice
     bufPos := 0
-    // in the prefix of buf where pat might start
+    // positions where pat can start and fit entirely within buf 
     for bufPos <= len(buf) - len(pat) {
         match := bytes.Equal(pat, buf[bufPos:bufPos + len(pat)])
         if match {
-            if sliceOpen { // close and send it
-                ch <- buf[sliceStart:bufPos]
-                sliceOpen = false
+            if sliceStart != noSlice { // slice is open
+                // close and send it
+                out <- buf[sliceStart:bufPos]
+                sliceStart = noSlice
             }
             if len(rep) > 0 { // TODO: optimize earlier by checking rep
-                ch <- rep // send replacement
+                out <- rep // send replacement
             }
             bufPos += len(pat) // advance past match
         } else {
-            if !sliceOpen { // open a new slice
-                sliceOpen = true
+            if sliceStart == noSlice { // slice is not open
+                // open it
                 sliceStart = bufPos
             }
             bufPos += 1
         }
     }
-    // send tail of buf, which is not big enough to contain pat
-    if sliceOpen {
-        ch <- buf[sliceStart:]
-    } else {
-        ch <- buf[bufPos:]
+    // does the unscanned tail of buf end with a prefix of pat?
+    // TODO: optimize for bufPos = len(buf)
+    tail := buf[bufPos:]
+    prefixMatchAtEnd := bytes.Equal(tail, pat[:-len(tail)])
+    if sliceStart != noSlice { // slice is open
+        if prefixMatchAtEnd {
+            // last slice should not include tail
+            out <- buf[sliceStart:bufPos]
+        } else {
+            // last slice goes all the way to the end of buf
+            out <- buf[sliceStart:]
+        }
     }
+    tailReturn <- tail
 }
 
 func Collect(ch <-chan []byte) []byte {
@@ -55,6 +64,12 @@ func Collect(ch <-chan []byte) []byte {
     return buf
 }
 
+func Finish(out chan<- []byte, tailReturn <-chan []byte) {
+    tail := <- tailReturn
+    out <- tail
+    close(out)
+}
+
 func Filter(pat []byte, rep []byte, buf []byte) ([]byte, error) {
     if len(pat) == 0 {
         return nil, errors.New("Pattern must not be empty")
@@ -63,10 +78,9 @@ func Filter(pat []byte, rep []byte, buf []byte) ([]byte, error) {
         return buf, nil // pat can't be in buf because it's too big
     }
 
-    ch := make(chan []byte)
-    go func() {
-        ReplaceToChan(pat, rep, buf, ch)
-        close(ch)
-    }()
-    return Collect(ch), nil
+    out := make(chan []byte)
+    tailReturn := make(chan []byte)
+    go ReplaceToChan(pat, rep, buf, out, tailReturn)
+    go Finish(out, tailReturn)
+    return Collect(out), nil
 }
