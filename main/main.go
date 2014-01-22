@@ -8,7 +8,7 @@ import (
 func main() {
     pat := []byte("fillory")
     rep := []byte("further")
-    buf := []byte("fillory")
+    buf := []byte("fillorygoat")
     newBuf, err := filter.Filter(pat, rep, buf)
     fmt.Printf("err = %#v\n", err);
     fmt.Printf("newBuf = %#v\n", string(newBuf));
