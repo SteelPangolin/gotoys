@@ -1,3 +1,3 @@
-file ../../../../bin/main
+file bin/main
 break runtime.panic
 run

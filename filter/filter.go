@@ -35,7 +35,7 @@ func ReplaceToChan(pat []byte, rep []byte, buf []byte, out chan<- []byte, tailRe
     // does the unscanned tail of buf end with a prefix of pat?
     // TODO: optimize for bufPos = len(buf)
     tail := buf[bufPos:]
-    prefixMatchAtEnd := bytes.Equal(tail, pat[:-len(tail)])
+    prefixMatchAtEnd := bytes.Equal(tail, pat[:len(tail)])
     if sliceStart != noSlice { // slice is open
         if prefixMatchAtEnd {
             // last slice should not include tail

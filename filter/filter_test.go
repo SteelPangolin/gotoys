@@ -32,11 +32,12 @@ func TestBufWithTail(t *testing.T) {
     pat := []byte("fillory")
     rep := []byte("further")
     buf := []byte("fillorygoats")
+    expected := []byte("furthergoats")
     newBuf, err := Filter(pat, rep, buf)
     if err != nil {
         t.Errorf("Unexpected error %#v from Filter(%#v, %#v, %#v)", err, pat, rep, buf)
     }
-    if !bytes.Equal(newBuf, rep) {
+    if !bytes.Equal(newBuf, expected) {
         t.Errorf("Expected %#v == %#v", string(newBuf), string(rep))
     }
 }
