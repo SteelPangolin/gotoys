@@ -2,20 +2,26 @@ package main
 
 import (
     "log"
-    "bytes"
-    "github.com/SteelPangolin/gotoys/filter"
+    "net/http"
+    "encoding/json"
+//    "github.com/SteelPangolin/gotoys/filter"
 )
 
-func main() {
-    pat := []byte("fillory")
-    rep := []byte("further")
-    buf := []byte("fillorygoats")
-    expected := []byte("furthergoats")
-    newBuf, err := filter.Filter(pat, rep, buf)
+func echo(w http.ResponseWriter, r *http.Request) {
+    var err error
+    var reqJSON []byte
+    reqJSON, err = json.MarshalIndent(r, "", "    ")
     if err != nil {
-        log.Printf("Unexpected error %#v from Filter(%#v, %#v, %#v)", err, pat, rep, buf)
+        log.Print(err)
     }
-    if !bytes.Equal(newBuf, rep) {
-        log.Printf("Expected %#v == %#v", string(newBuf), string(rep))
+    w.Header().Set("Content-Type", "application/json")
+    _, err = w.Write(reqJSON)
+    if err != nil {
+        log.Print(err)
     }
+}
+
+func main() {
+    http.HandleFunc("/", echo)
+    http.ListenAndServe(":5000", nil)
 }
