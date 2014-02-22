@@ -47,7 +47,9 @@ func GoMap(dict C.CFDictionaryRef) map[string]string {
     values := make([]unsafe.Pointer, count)
     C.CFDictionaryGetKeysAndValues(dict, &keys[0], &values[0])
     for i, key := range keys {
-        m[GoString(C.CFStringRef(key))] = GoString(C.CFCopyDescription(C.CFTypeRef(values[i])))
+        desc := C.CFCopyDescription(C.CFTypeRef(values[i]))
+        defer C.CFRelease(C.CFTypeRef(desc))
+        m[GoString(C.CFStringRef(key))] = GoString(desc)
     }
     return m
 }
