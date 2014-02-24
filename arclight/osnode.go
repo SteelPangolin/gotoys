@@ -13,10 +13,6 @@ type OsNode struct {
     os.FileInfo
 }
 
-func (node *OsNode) Name() string {
-    return node.FileInfo.Name()
-}
-
 func (node *OsNode) Attrs() map[string]string {
     return node.attrs
 }

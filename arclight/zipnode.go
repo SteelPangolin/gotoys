@@ -61,8 +61,8 @@ type ZipNode struct {
     FileHeader zip.FileHeader
 }
 
+// Zip entries for directories have paths with a trailing slash.
 func (node *ZipNode) Name() string {
-    // Zip entries for directories have paths with a trailing slash.
     return slashpath.Base(slashpath.Clean(node.FileHeader.Name))
 }
 
