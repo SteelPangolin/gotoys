@@ -5,20 +5,20 @@ import (
     "io"
 )
 
-type Node interface {
+type VfsNode interface {
     Name() string
+    Attrs() map[string]string
 }
 
-type Dir interface {
-    Node
-    Children()                ([]Node, error)
-    Resolve(relpath string)   (Node,   error)
+type VfsDir interface {
+    VfsNode
+    Children()                ([]VfsNode, error)
+    Resolve(relpath string)   (VfsNode,   error)
 }
 
-type File interface {
-    Node
+type VfsFile interface {
+    VfsNode
     Size()      int64
     ModTime()   time.Time
-    Reader()    io.Reader
-    ReaderAt()  io.ReaderAt
+    Reader()    (io.Reader, error)
 }
