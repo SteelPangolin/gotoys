@@ -4,6 +4,8 @@ import "sort"
 
 // Given a list of paths, return a list of paths that must
 // be created to form a complete directory tree.
+// Assumes the input list has been Clean()ed already,
+// and no paths start with /.
 func ImplicitDirs(paths []string) []string {
     sort.Strings(paths)
     var out []string
