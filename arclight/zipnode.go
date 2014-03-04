@@ -2,17 +2,15 @@ package arclight
 
 import (
 	"archive/zip"
-	//    slashpath "path"
 	"fmt"
 	"io"
-	"log"
+    "time"
+    slashpath "path"
 )
 
 type ZipArchive struct {
 	VfsFile
 }
-
-type nodeFilter func(f zip.File) bool
 
 func (arc *ZipArchive) nodes() ([]VfsNode, error) {
 	reader, err := arc.Reader()
@@ -33,11 +31,19 @@ func (arc *ZipArchive) nodes() ([]VfsNode, error) {
 	}
 
 	nodes := make([]VfsNode, len(z.File))
-	nodePaths := make([]string, len(z.File))
+	paths := make([]string, len(z.File))
 	for i, f := range z.File {
-		nodes[i] = NewZipNode(f.FileHeader)
-		nodePaths[i] = f.FileHeader.Name
+		paths[i] = f.Name
+        if f.FileInfo().IsDir() {
+
+        } else {
+
+        }
 	}
+
+    for _, path := range ImplicitDirs(paths) {
+        nodes = append(nodes, NewImplicitZipDir(arc, path))
+    }
 
 	return nodes, nil
 }
@@ -48,67 +54,118 @@ func (arc *ZipArchive) Children() ([]VfsNode, error) {
 }
 
 func (arc *ZipArchive) Resolve(relpath string) (VfsNode, error) {
-	log.Panic("Resolve() not implemented for ZipArchive")
-	return nil, nil
-
-	/*
-	   path := slashpath.Join(dir.Path, relpath)
-	   fi, err := os.Stat(path)
-	   if err != nil {
-	       return nil, err
-	   }
-	   node := NewOsNode(path, fi)
-	   return node, nil
-	*/
-}
-
-type ZipNode struct {
-	attrs      map[string]string
-	Archive    ZipArchive
-	FileHeader zip.FileHeader
-}
-
-func (node *ZipNode) Name() string {
-	return node.FileHeader.FileInfo().Name()
-}
-
-func (node *ZipNode) Attrs() map[string]string {
-	return node.attrs
-}
-
-func NewZipNode(fh zip.FileHeader) VfsNode {
-	var node VfsNode
-	fi := fh.FileInfo()
-	if fi.IsDir() {
-		dir := new(ZipDir)
-		dir.attrs = make(map[string]string)
-		dir.FileHeader = fh
-		node = dir
-	} else {
-		file := new(ZipFile)
-		file.attrs = make(map[string]string)
-		file.FileHeader = fh
-		node = file
-	}
-	if fh.Comment != "" {
-		node.Attrs()["zip_comment"] = fh.Comment
-	}
-	return Specialize(node)
+    // TODO: implement
+	nodes, err := arc.nodes()
+    if err != nil || len(nodes) == 0 {
+        return nil, err
+    } else {
+        return nodes[0], nil
+    }
 }
 
 // A file inside the archive
 type ZipFile struct {
-	ZipNode
+    attrs      NodeAttrs
+    file       *zip.File
+}
+
+func NewZipFile(f *zip.File) VfsFile {
+    node := new(ZipFile)
+    node.attrs = make(NodeAttrs)
+    if f.Comment != "" {
+        node.attrs["zip.comment"] = f.Comment
+    }
+    node.file = f
+    return node
+}
+
+func (node *ZipFile) Attrs() NodeAttrs {
+    return node.attrs
+}
+
+func (node *ZipFile) Name() string {
+    return node.file.FileInfo().Name()
+}
+
+func (node *ZipFile) Size() int64 {
+    return node.file.FileInfo().Size()
+}
+
+func (node *ZipFile) ModTime() time.Time {
+    return node.file.FileInfo().ModTime()
+}
+
+func (node *ZipFile) Reader() (io.Reader, error) {
+    return node.file.Open()
 }
 
 // A directory inside the archive
 type ZipDir struct {
-	ZipNode
+    attrs      NodeAttrs
+    arc        *ZipArchive
+    path       string
+}
+
+func NewZipDir(arc *ZipArchive, fh *zip.FileHeader) VfsDir {
+    node := new(ZipDir)
+    node.attrs = make(NodeAttrs)
+    if fh.Comment != "" {
+        node.attrs["zip.comment"] = fh.Comment
+    }
+    node.arc = arc
+    node.path = fh.Name
+    return node
+}
+
+func (node *ZipDir) Attrs() NodeAttrs {
+    return node.attrs
+}
+
+func (node *ZipDir) Name() string {
+    return slashpath.Base(node.path)
+}
+
+func (node *ZipDir) Children() ([]VfsNode, error) {
+    // TODO
+    return node.arc.Children()
+}
+
+func (node *ZipDir) Resolve(relpath string) (VfsNode, error) {
+    // TODO
+    return node.arc.Resolve(relpath)
 }
 
 // A directory not present in the Zip archive,
 // but implied by other entries with paths of
 // which this directory's path is a prefix.
 type ImplicitZipDir struct {
-	ZipNode
+    attrs      NodeAttrs
+    arc        *ZipArchive
+    path       string
+}
+
+func NewImplicitZipDir(arc *ZipArchive, path string) VfsDir {
+    node := new(ImplicitZipDir)
+    node.attrs = make(NodeAttrs)
+    node.arc = arc
+    node.path = path
+    return node
+}
+
+func (node *ImplicitZipDir) Attrs() NodeAttrs {
+    return node.attrs
+}
+
+func (node *ImplicitZipDir) Name() string {
+    return slashpath.Base(node.path)
+}
+
+func (node *ImplicitZipDir) Children() ([]VfsNode, error) {
+    // TODO
+    return node.arc.Children()
+}
+
+func (node *ImplicitZipDir) Resolve(relpath string) (VfsNode, error) {
+    // TODO
+    return node.arc.Resolve(relpath)
 }

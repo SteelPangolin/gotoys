@@ -5,9 +5,11 @@ import (
 	"time"
 )
 
+type NodeAttrs map[string]string
+
 type VfsNode interface {
 	Name() string
-	Attrs() map[string]string
+	Attrs() NodeAttrs
 }
 
 type VfsDir interface {

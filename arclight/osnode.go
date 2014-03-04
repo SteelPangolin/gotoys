@@ -7,12 +7,12 @@ import (
 )
 
 type OsNode struct {
-	attrs map[string]string
+	attrs NodeAttrs
 	Path  string
 	os.FileInfo
 }
 
-func (node *OsNode) Attrs() map[string]string {
+func (node *OsNode) Attrs() NodeAttrs {
 	return node.attrs
 }
 
@@ -20,13 +20,13 @@ func NewOsNode(path string, fi os.FileInfo) VfsNode {
 	var node VfsNode
 	if fi.IsDir() {
 		dir := new(OsDir)
-		dir.attrs = make(map[string]string)
+		dir.attrs = make(NodeAttrs)
 		dir.Path = path
 		dir.FileInfo = fi
 		node = dir
 	} else {
 		file := new(OsFile)
-		file.attrs = make(map[string]string)
+		file.attrs = make(NodeAttrs)
 		file.Path = path
 		file.FileInfo = fi
 		node = file
