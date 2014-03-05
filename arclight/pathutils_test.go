@@ -15,7 +15,7 @@ func strSlicesEqual(a, b []string) bool {
 }
 
 // Case where no ancestors exist in the input
-func TestImplicitDirs1(t *testing.T) {
+func TestImplicitDirs_NoAncestor(t *testing.T) {
 	input := []string{
 		"alpha/beta/delta",
 		"alpha/beta/gamma",
@@ -33,7 +33,7 @@ func TestImplicitDirs1(t *testing.T) {
 }
 
 // Case where an ancestor exists in the input
-func TestImplicitDirs2(t *testing.T) {
+func TestImplicitDirs_Ancestor(t *testing.T) {
     input := []string{
         "theta",
         "theta/phi/psi/upsilon",
@@ -47,4 +47,3 @@ func TestImplicitDirs2(t *testing.T) {
         t.Errorf("output %#v != expected %#v", output, expected)
     }
 }
-

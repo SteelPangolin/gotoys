@@ -9,8 +9,8 @@ import (
 )
 
 // Detect MIME type using file name extension.
-func MimeTypeByExt(file VfsFile) string {
-	return mime.TypeByExtension(slashpath.Ext(file.Name()))
+func MimeTypeByExt(node VfsNode) string {
+	return mime.TypeByExtension(slashpath.Ext(node.Name()))
 }
 
 // Initialized the first time MimeTypeByMagic() is called.
@@ -28,6 +28,7 @@ func MimeTypeByMagic(file VfsFile) (string, error) {
 	defer MimeTypeByMagic_recover()
 
 	// init libmagic on first call
+	// TODO: lock? what happens if it gets inited twice?
 	if magic == nil {
 		magic, magic_err = magicmime.New()
 	}
@@ -48,17 +49,17 @@ func MimeTypeByMagic(file VfsFile) (string, error) {
 			return "", err
 		}
 
+		closer, ok := reader.(io.Closer)
+        if ok {
+            defer closer.Close()
+        }
+
 		buf := make([]byte, 512)
 		n, err := reader.Read(buf)
 		if err != nil && err != io.EOF {
 			return "", err
 		}
 		buf = buf[:n]
-
-		readcloser, ok := reader.(io.ReadCloser)
-		if ok {
-			readcloser.Close()
-		}
 
 		mimetype_raw, err = magic.TypeByBuffer(buf)
 	}
@@ -76,7 +77,7 @@ func MimeTypeByMagic(file VfsFile) (string, error) {
 	return mimetype, nil
 }
 
-func DetectMimeTypes(file VfsFile) {
+func DetectMimeTypes(file VfsFileNode) {
 	mimetype_ext := MimeTypeByExt(file)
 
 	mimetype_magic, err := MimeTypeByMagic(file)

@@ -17,25 +17,23 @@ func (node *OsNode) Attrs() NodeAttrs {
 }
 
 func NewOsNode(path string, fi os.FileInfo) VfsNode {
-	var node VfsNode
 	if fi.IsDir() {
-		dir := new(OsDir)
-		dir.attrs = make(NodeAttrs)
-		dir.Path = path
-		dir.FileInfo = fi
-		node = dir
+		return NewOsDir(path, fi)
 	} else {
-		file := new(OsFile)
-		file.attrs = make(NodeAttrs)
-		file.Path = path
-		file.FileInfo = fi
-		node = file
+		return NewOsFile(path, fi)
 	}
-	return Specialize(node)
 }
 
 type OsDir struct {
 	OsNode
+}
+
+func NewOsDir(path string, fi os.FileInfo) *OsDir {
+	node := new(OsDir)
+	node.attrs = make(NodeAttrs)
+	node.Path = path
+	node.FileInfo = fi
+	return node
 }
 
 func (dir *OsDir) Children() ([]VfsNode, error) {
@@ -52,7 +50,11 @@ func (dir *OsDir) Children() ([]VfsNode, error) {
 	children := make([]VfsNode, len(fis))
 	for i, fi := range fis {
 		path := slashpath.Join(dir.Path, fi.Name())
-		children[i] = NewOsNode(path, fi)
+		if fi.IsDir() {
+			children[i] = NewOsDir(path, fi)
+		} else {
+			children[i] = NewOsFile(path, fi)
+		}
 	}
 
 	return children, nil
@@ -65,13 +67,26 @@ func (dir *OsDir) Resolve(relpath string) (VfsNode, error) {
 		return nil, err
 	}
 
-	node := NewOsNode(path, fi)
+	var node VfsNode
+	if fi.IsDir() {
+		node = NewOsDir(path, fi)
+	} else {
+		node = NewOsFile(path, fi)
+	}
 
 	return node, nil
 }
 
 type OsFile struct {
 	OsNode
+}
+
+func NewOsFile(path string, fi os.FileInfo) *OsFile {
+	node := new(OsFile)
+	node.attrs = make(NodeAttrs)
+	node.Path = path
+	node.FileInfo = fi
+	return node
 }
 
 func (file *OsFile) Reader() (io.Reader, error) {

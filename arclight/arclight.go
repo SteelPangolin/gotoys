@@ -1,13 +1,11 @@
 package arclight
 
 func Specialize(orig VfsNode) VfsNode {
-	if file, ok := orig.(VfsFile); ok {
+	if file, ok := orig.(VfsFileNode); ok {
 		DetectMimeTypes(file)
 		if mimetype, ok := file.Attrs()["mimetype"]; ok {
 			if mimetype == "application/zip" {
-				arc := new(ZipArchive)
-				arc.VfsFile = file
-				return arc
+				return NewZipArchive(file)
 			}
 		}
 	}
