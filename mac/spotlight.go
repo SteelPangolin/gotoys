@@ -1,3 +1,4 @@
+// +build darwin
 package mac
 
 // #include <CoreFoundation/CoreFoundation.h>
@@ -7,29 +8,32 @@ package mac
 // #cgo CFLAGS:  -framework CoreServices
 // #cgo LDFLAGS: -framework CoreServices
 import "C"
-import "log"
 
-func Spotlight(path string) map[string]string {
-    cfpath := CreateString(path)
-    defer C.CFRelease(C.CFTypeRef(cfpath))
+import (
+	"fmt"
+)
 
-    mditem := C.MDItemCreate(nil, cfpath)
-    if (mditem == nil) {
-        log.Panicf("MDItemCreate: failed for path %#v", path)
-    }
-    defer C.CFRelease(C.CFTypeRef(mditem))
+func Spotlight(path string) (map[string]interface{}, error) {
+	cfpath := CreateString(path)
+	defer C.CFRelease(C.CFTypeRef(cfpath))
 
-    names := C.MDItemCopyAttributeNames(mditem)
-    if (names == nil) {
-        log.Panicf("Inspect: MDItemCopyAttributeNames failed for path %#v", path)
-    }
-    defer C.CFRelease(C.CFTypeRef(names))
+	mditem := C.MDItemCreate(nil, cfpath)
+	if mditem == nil {
+		return nil, fmt.Errorf("MDItemCreate failed for path %#v", path)
+	}
+	defer C.CFRelease(C.CFTypeRef(mditem))
 
-    attrs := C.MDItemCopyAttributes(mditem, names)
-    if (attrs == nil) {
-        log.Panicf("Inspect: MDItemCopyAttributes failed for path %#v", path)
-    }
-    defer C.CFRelease(C.CFTypeRef(attrs))
+	names := C.MDItemCopyAttributeNames(mditem)
+	if names == nil {
+		return nil, fmt.Errorf("MDItemCopyAttributeNames failed for path %#v", path)
+	}
+	defer C.CFRelease(C.CFTypeRef(names))
 
-    return GoMap(attrs)
+	attrs := C.MDItemCopyAttributes(mditem, names)
+	if attrs == nil {
+		return nil, fmt.Errorf("MDItemCopyAttributes failed for path %#v", path)
+	}
+	defer C.CFRelease(C.CFTypeRef(attrs))
+
+	return GoMap(attrs), nil
 }
