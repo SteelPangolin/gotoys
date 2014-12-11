@@ -9,7 +9,8 @@ import (
 )
 
 func list(node arclight.VfsNode, depth int) {
-	node = arclight.Specialize(node)
+	//node = arclight.Specialize(node)
+	node.Attrs()["mimetype"] = node.MimeType()
 	pad := strings.Repeat("  ", depth)
 	fmt.Printf("%s%s\n", pad, node.Name())
 

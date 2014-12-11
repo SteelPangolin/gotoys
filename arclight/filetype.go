@@ -1,72 +1,29 @@
 package arclight
 
 import (
-	"errors"
 	"github.com/rakyll/magicmime"
 	"io"
 	"log"
 	"mime"
-	"os"
 	slashpath "path"
 	"strings"
 )
 
-type modeMime struct {
-	mode os.FileMode
-	mime string
-}
-
-// Order is significant: in Go, all CharDevices are also Devices.
-var modeMimes = []modeMime{
-	{
-		mode: os.ModeDir,
-		mime: "inode/directory",
-	},
-	{
-		mode: os.ModeCharDevice,
-		mime: "inode/chardevice",
-	},
-	{
-		mode: os.ModeDevice,
-		mime: "inode/blockdevice",
-	},
-	{
-		mode: os.ModeNamedPipe,
-		mime: "inode/fifo",
-	},
-	{
-		mode: os.ModeSocket,
-		mime: "inode/socket",
-	},
-}
-
-var OctetStream = "application/octet-stream"
-
-var RealFSOnly = errors.New("Must be on a real filesystem")
-
-// ignores symlinks
-// see http://standards.freedesktop.org/shared-mime-info-spec/shared-mime-info-spec-latest.html#idm140625828597376
-func MimeTypeByStat(node VfsNode) (string, error) {
-	osnode, ok := node.(*OsNode) // TODO: is this a legit cast?
-	if !ok {
-		return "", RealFSOnly
-	}
-	mode := osnode.Mode()
-	for _, entry := range modeMimes {
-		if mode&entry.mode == entry.mode {
-			return entry.mime, nil
-		}
-	}
-	return OctetStream, nil
-}
+const (
+	InodeDirectory = "inode/directory"
+	OctetStream    = "application/octet-stream"
+)
 
 // Detect MIME type using file name extension.
-func MimeTypeByExt(node VfsNode) (string, error) {
-	mimetype_raw := mime.TypeByExtension(slashpath.Ext(node.Name()))
+func MimeTypeByExt(path string) string {
+	mimetype := mime.TypeByExtension(slashpath.Ext(path))
 
-	mediatype, params, err := mime.ParseMediaType(mimetype_raw)
+	mediatype, params, err := mime.ParseMediaType(mimetype)
 	if err != nil {
-		return "", err
+		// mime.TypeByExtension() should always return a properly formed MIME type,
+		// so this should never happen.
+		log.Printf("WARNING: mime.TypeByExtension() returned MIME type %#v", mimetype)
+		return OctetStream
 	}
 
 	// mime package lies about text type charsets, so drop them
@@ -74,77 +31,86 @@ func MimeTypeByExt(node VfsNode) (string, error) {
 		delete(params, "charset")
 	}
 
-	mimetype := mime.FormatMediaType(mediatype, params)
-
-	return mimetype, nil
+	return mime.FormatMediaType(mediatype, params)
 }
 
-// Initialized the first time MimeTypeByMagic() is called.
+var MimeTypeFromFile func(path string) string = StubMimeTypeFromFile
+var MimeTypeFromReader func(open func() (io.Reader, error)) string = StubMimeTypeFromReader
+
+func StubMimeTypeFromFile(path string) string {
+	return OctetStream
+}
+
+func StubMimeTypeFromReader(open func() (io.Reader, error)) string {
+	return OctetStream
+}
+
+// Interface to libmagic.
 var magic *magicmime.Magic
-var magic_err error
 
-func MimeTypeByMagic_recover() {
-	if r := recover(); r != nil {
-		log.Printf("%#q\n", r)
+// Initialize libmagic.
+func init() {
+	var err error
+	magic, err = magicmime.New(magicmime.MAGIC_MIME)
+	if err != nil {
+		return
 	}
+	MimeTypeFromFile = MagicMimeTypeFromFile
+	MimeTypeFromReader = MagicMimeTypeFromReader
 }
 
-// Detect MIME type using libmagic
-func MimeTypeByMagic(node VfsNode) (string, error) {
-	defer MimeTypeByMagic_recover()
-
-	// init libmagic on first call
-	// TODO: lock? what happens if it gets inited twice?
-	if magic == nil {
-		magic, magic_err = magicmime.New(magicmime.MAGIC_MIME)
-	}
-	if magic_err != nil {
-		return "", magic_err
-	}
-
-	var mimetype_raw string
-	var err error
-	osfile, ok := node.(*OsFile)
-	if ok {
-		mimetype_raw, err = magic.TypeByFile(osfile.Path)
-	} else {
-		file, ok := node.(VfsFile)
-		if !ok {
-			return "", errors.New("not a file, can't look for magic")
-		}
-		// read up to 512 bytes
-		// enough for most MIME sniffers?
-		reader, err := file.Reader()
-		if err != nil {
-			return "", err
-		}
-
-		closer, ok := reader.(io.Closer)
-		if ok {
-			defer closer.Close()
-		}
-
-		buf := make([]byte, 512)
-		n, err := reader.Read(buf)
-		if err != nil && err != io.EOF {
-			return "", err
-		}
-		buf = buf[:n]
-
-		mimetype_raw, err = magic.TypeByBuffer(buf)
-	}
+func MagicMimeTypeFromFile(path string) string {
+	mimetype, err := magic.TypeByFile(path)
 	if err != nil {
-		return "", err
+		log.Printf("WARNING: libmagic error: %v", err)
+		return OctetStream
+	}
+	return cleanupMimeTypeByMagic(mimetype)
+}
+
+func MagicMimeTypeFromReader(open func() (io.Reader, error)) string {
+	reader, err := open()
+	if err != nil {
+		log.Printf("WARNING: couldn't open reader: %v", err)
+		return OctetStream
 	}
 
-	mediatype, params, err := mime.ParseMediaType(mimetype_raw)
+	if closer, ok := reader.(io.Closer); ok {
+		defer closer.Close()
+	}
+
+	// read up to 512 bytes
+	// enough for most file types?
+	numBytes := 512
+	buf := make([]byte, numBytes)
+	n, err := reader.Read(buf)
+	if err != nil && err != io.EOF {
+		log.Printf("WARNING: error while trying to read %d bytes: %v", numBytes, err)
+		return OctetStream
+	}
+	buf = buf[:n]
+
+	mimetype, err := magic.TypeByBuffer(buf)
 	if err != nil {
-		return "", err
+		log.Printf("WARNING: libmagic error: %v", err)
+		return OctetStream
+	}
+	return cleanupMimeTypeByMagic(mimetype)
+}
+
+// libmagic isn't always helpful.
+func cleanupMimeTypeByMagic(mimetype string) string {
+	mediatype, params, err := mime.ParseMediaType(mimetype)
+	if err != nil {
+		// libmagic should always return a properly formed MIME type,
+		// so this should never happen.
+		log.Printf("WARNING: libmagic returned improperly formed MIME type %#v", mimetype)
+		return OctetStream
 	}
 
 	// We don't care if it's empty, it should still use a standard MIME type.
 	if mediatype == "inode/x-empty" {
-		mediatype = OctetStream
+		return OctetStream
 	}
 
 	// There is no binary charset, even for types that actually have a charset param.
@@ -153,11 +119,11 @@ func MimeTypeByMagic(node VfsNode) (string, error) {
 		delete(params, "charset")
 	}
 
-	mimetype := mime.FormatMediaType(mediatype, params)
-
-	return mimetype, nil
+	return mime.FormatMediaType(mediatype, params)
 }
 
+// TODO: generalize for any node that has both a file name and contents.
+/*
 func DetectMimeTypes(node VfsNode) {
 	// this will only assign MIME types to stuff that isn't a regular file
 	mimetype_stat, err := MimeTypeByStat(node)
@@ -204,3 +170,4 @@ func DetectMimeTypes(node VfsNode) {
 		return
 	}
 }
+*/

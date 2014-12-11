@@ -11,6 +11,7 @@ type VfsNode interface {
 	Name() string
 	ModTime() time.Time
 	Attrs() NodeAttrs
+	MimeType() string
 }
 
 type VfsDir interface {

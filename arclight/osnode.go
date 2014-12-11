@@ -77,6 +77,10 @@ func (dir *OsDir) Resolve(relpath string) (VfsNode, error) {
 	return node, nil
 }
 
+func (dir *OsDir) MimeType() string {
+	return InodeDirectory
+}
+
 type OsFile struct {
 	OsNode
 }
@@ -91,4 +95,49 @@ func NewOsFile(path string, fi os.FileInfo) *OsFile {
 
 func (file *OsFile) Reader() (io.Reader, error) {
 	return os.Open(file.Path)
+}
+
+func (file *OsFile) MimeType() string {
+	// special file types
+	if mimetype := file.inodeMimeType(); mimetype != OctetStream {
+		return mimetype
+	}
+
+	mimetype := MagicMimeTypeFromReader(file.Reader)
+	return mimetype
+}
+
+type modeMime struct {
+	mode os.FileMode
+	mime string
+}
+
+// Order is significant: in Go, all CharDevices are also Devices.
+var modeMimes = []modeMime{
+	{
+		mode: os.ModeCharDevice,
+		mime: "inode/chardevice",
+	},
+	{
+		mode: os.ModeDevice,
+		mime: "inode/blockdevice",
+	},
+	{
+		mode: os.ModeNamedPipe,
+		mime: "inode/fifo",
+	},
+	{
+		mode: os.ModeSocket,
+		mime: "inode/socket",
+	},
+}
+
+func (file *OsFile) inodeMimeType() string {
+	mode := file.Mode()
+	for _, entry := range modeMimes {
+		if mode&entry.mode == entry.mode {
+			return entry.mime
+		}
+	}
+	return OctetStream
 }

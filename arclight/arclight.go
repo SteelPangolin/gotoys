@@ -1,5 +1,6 @@
 package arclight
 
+/*
 func Specialize(orig VfsNode) VfsNode {
 	if file, ok := orig.(VfsFileNode); ok {
 		DetectMimeTypes(file)
@@ -11,3 +12,4 @@ func Specialize(orig VfsNode) VfsNode {
 	}
 	return orig
 }
+*/
