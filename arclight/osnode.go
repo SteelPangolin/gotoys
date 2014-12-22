@@ -41,6 +41,7 @@ func (dir *OsDir) Children() ([]VfsNode, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
 
 	fis, err := f.Readdir(0)
 	if err != nil {
@@ -103,7 +104,7 @@ func (file *OsFile) MimeType() string {
 		return mimetype
 	}
 
-	mimetype := MagicMimeTypeFromReader(file.Reader)
+	mimetype := MagicMimeTypeFromFile(file.Path)
 	return mimetype
 }
 
