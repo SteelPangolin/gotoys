@@ -4,31 +4,10 @@ import (
 	"bytes"
 	"io/ioutil"
 	"os"
-	//"sort"
 	"path/filepath"
+	"sort"
 	"testing"
 )
-
-type DBMItems []DBMItem
-
-func (items DBMItems) Len() int {
-	return len(items)
-}
-
-func (items DBMItems) Swap(i, j int) {
-	items[i], items[j] = items[j], items[i]
-}
-
-func (items DBMItems) Less(i, j int) bool {
-	return bytes.Compare(items[i].Key, items[j].Key) == -1
-}
-
-func insertChecked(t *testing.T, dbm *DBM, key, value string) {
-	err := dbm.Insert([]byte(key), []byte(value))
-	if err != nil {
-		t.Errorf("Error on insert: %v", err)
-	}
-}
 
 func TestDBM(t *testing.T) {
 	// create a temp dir for test files
@@ -52,14 +31,15 @@ func TestDBM(t *testing.T) {
 
 	// insert some data
 	{
-		fill := [][]string{
-			{"a", "alphabet"},
-			{"b", "battlement"},
-			{"c", "carnival"},
-			{"d", "dinosaur"},
+		items := Items{
+			Item{[]byte("a"), []byte("alphabet")},
+			Item{[]byte("b"), []byte("battlement")},
+			Item{[]byte("c"), []byte("carnival")},
+			Item{[]byte("d"), []byte("dinosaur")},
 		}
-		for _, keyValue := range fill {
-			insertChecked(t, dbm, keyValue[0], keyValue[1])
+		err := dbm.Update(items)
+		if err != nil {
+			t.Errorf("Error on update: %v", err)
 		}
 		if dbm.Len() != 4 {
 			t.Errorf("DB should have 4 keys, but actually has %d", dbm.Len())
@@ -69,8 +49,11 @@ func TestDBM(t *testing.T) {
 	// try to insert a key that already exists, which should fail
 	{
 		err := dbm.Insert([]byte("c"), []byte("contentment"))
-		if err != nil && err != AlreadyExists {
-			t.Errorf("Error on insert: %v", err)
+		if err != nil {
+			_, expected := err.(KeyAlreadyExists)
+			if !expected {
+				t.Errorf("Error on insert: %v", err)
+			}
 		}
 		if dbm.Len() != 4 {
 			t.Errorf("DB should still have 4 keys, but actually has %d", dbm.Len())
@@ -99,22 +82,55 @@ func TestDBM(t *testing.T) {
 		}
 	}
 
-	// delete a key that has never existed
-	{
-		err := dbm.Delete([]byte("x"))
-		if err != nil && err != NotFound {
-			t.Errorf("Error on delete: %#v", err)
-		}
-	}
-
 	// delete a key that has already been deleted
 	{
 		err := dbm.Delete([]byte("b"))
-		if err != nil && err != NotFound {
-			t.Errorf("Error on delete: %#v", err)
+		if err != nil {
+			_, expected := err.(KeyNotFound)
+			if !expected {
+				t.Errorf("Error on delete: %v", err)
+			}
 		}
 		if dbm.Len() != 3 {
 			t.Errorf("DB should have 3 keys, but actually has %d", dbm.Len())
+		}
+	}
+
+	// delete a key that has never existed
+	{
+		err := dbm.Delete([]byte("x"))
+		if err != nil {
+			_, expected := err.(KeyNotFound)
+			if !expected {
+				t.Errorf("Error on delete: %v", err)
+			}
+		}
+	}
+
+	// get all contents, see if it's what we expected
+	{
+		expected := Items{
+			Item{[]byte("a"), []byte("alphabet")},
+			Item{[]byte("c"), []byte("contentment")},
+			Item{[]byte("d"), []byte("dinosaur")},
+		}
+		actual := dbm.Items()
+		if len(expected) != len(actual) {
+			t.Fatalf(
+				"Expected and actual DB contents have different lengths: %d vs. %d",
+				len(expected), len(actual))
+		}
+		sort.Sort(actual)
+		for i, expectedItem := range expected {
+			actualItem := actual[i]
+			if bytes.Compare(expectedItem.Key, actualItem.Key) != 0 {
+				t.Errorf("Expected and actual items %d have different keys: %s vs. %s",
+					expectedItem.Key, actualItem.Key)
+			}
+			if bytes.Compare(expectedItem.Value, actualItem.Value) != 0 {
+				t.Errorf("Expected and actual items %d have different values: %s vs. %s",
+					expectedItem.Value, actualItem.Value)
+			}
 		}
 	}
 }

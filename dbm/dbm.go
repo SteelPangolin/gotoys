@@ -7,6 +7,7 @@ package dbm
 import "C"
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"syscall"
@@ -17,43 +18,26 @@ type DBM struct {
 	cDbm *C.DBM
 }
 
-type DBMError struct {
-	errno  int
-	errstr string
-	err    error
+type KeyAlreadyExists struct {
+	Key []byte
 }
 
-var AlreadyExists = &DBMError{
-	errstr: "Key already exists",
+func (err KeyAlreadyExists) Error() string {
+	return fmt.Sprintf("Key already exists: %s", err.Key)
 }
 
-var NotFound = &DBMError{
-	errstr: "Key not found",
+type KeyNotFound struct {
+	Key []byte
 }
 
-func newError(errno C.int) *DBMError {
-	err := &DBMError{
-		errno: int(errno),
-	}
-	cStr := C.strerror(errno)
-	if uintptr(unsafe.Pointer(cStr)) == C.EINVAL {
-		err.errstr = fmt.Sprintf("Unknown error: %d", errno)
-	} else {
-		err.errstr = C.GoString(cStr)
-	}
-	return err
+func (err KeyNotFound) Error() string {
+	return fmt.Sprintf("Key not found: %s", err.Key)
 }
 
-func wrapError(err error) error {
-	return &DBMError{
-		err:    err,
-		errstr: err.Error(),
-	}
-}
-
-func (err *DBMError) Error() string {
-	return err.errstr
-}
+const (
+	dbm_ALREADY_EXISTS = 1
+	dbm_NOT_FOUND      = 1
+)
 
 func Open(path string) (*DBM, error) {
 	cPath := C.CString(path)
@@ -63,7 +47,7 @@ func Open(path string) (*DBM, error) {
 		syscall.S_IREAD|syscall.S_IWRITE|syscall.S_IRGRP|syscall.S_IWGRP)
 	C.free(unsafe.Pointer(cPath))
 	if err != nil {
-		return nil, wrapError(err)
+		return nil, err
 	}
 	dbm := &DBM{
 		cDbm: cDbm,
@@ -71,25 +55,9 @@ func Open(path string) (*DBM, error) {
 	return dbm, nil
 }
 
-func (dbm *DBM) checkError() *DBMError {
-	errno := C.dbm_error(dbm.cDbm)
-	if errno == 0 {
-		return nil
-	}
-	C.dbm_clearerr(dbm.cDbm)
-	return newError(errno)
-}
-
 func (dbm *DBM) Close() {
 	C.dbm_close(dbm.cDbm)
 }
-
-const (
-	dbm_SUCCESS        = 0
-	dbm_ALREADY_EXISTS = 1
-	dbm_NOT_FOUND      = 1
-	dbm_ERROR          = -1
-)
 
 func bytesToDatum(buf []byte) C.datum {
 	return C.datum{
@@ -105,37 +73,34 @@ func datumToBytes(datum C.datum) []byte {
 	return C.GoBytes(datum.dptr, C.int(datum.dsize))
 }
 
-func (dbm *DBM) store(key, content []byte, mode C.int) (C.int, error) {
-	status, err := C.dbm_store(dbm.cDbm, bytesToDatum(key), bytesToDatum(content), mode)
+func (dbm *DBM) store(key, value []byte, mode C.int) (C.int, error) {
+	status, err := C.dbm_store(dbm.cDbm, bytesToDatum(key), bytesToDatum(value), mode)
 	if err != nil {
-		return status, wrapError(err)
-	}
-	if status == dbm_ERROR {
-		return status, dbm.checkError()
+		return status, err
 	}
 	return status, nil
 }
 
-func (dbm *DBM) Insert(key, content []byte) error {
-	status, err := dbm.store(key, content, C.DBM_INSERT)
+func (dbm *DBM) Insert(key, value []byte) error {
+	status, err := dbm.store(key, value, C.DBM_INSERT)
 	if err != nil {
 		return err
 	}
 	if status == dbm_ALREADY_EXISTS {
-		return nil
+		return KeyAlreadyExists{key}
 	}
 	return nil
 }
 
-func (dbm *DBM) Replace(key, content []byte) error {
-	_, err := dbm.store(key, content, C.DBM_REPLACE)
+func (dbm *DBM) Replace(key, value []byte) error {
+	_, err := dbm.store(key, value, C.DBM_REPLACE)
 	return err
 }
 
 func (dbm *DBM) Fetch(key []byte) ([]byte, error) {
 	datum, err := C.dbm_fetch(dbm.cDbm, bytesToDatum(key))
 	if err != nil {
-		return nil, wrapError(err)
+		return nil, err
 	}
 	return datumToBytes(datum), nil
 }
@@ -143,23 +108,21 @@ func (dbm *DBM) Fetch(key []byte) ([]byte, error) {
 func (dbm *DBM) Delete(key []byte) error {
 	status, err := C.dbm_delete(dbm.cDbm, bytesToDatum(key))
 	if err != nil {
-		println("C error")
-		return wrapError(err)
-	}
-	if status == dbm_ERROR {
-		println("DB error")
-		return dbm.checkError()
+		return err
 	}
 	if status == dbm_NOT_FOUND {
-		return NotFound
+		return KeyNotFound{key}
 	}
 	return nil
 }
 
 func (dbm *DBM) KeysCallback(callback func([]byte) error) error {
-	// TODO: rework this loop with C errno support and explicit DB error checks
-	for key := datumToBytes(C.dbm_firstkey(dbm.cDbm)); key != nil; key = datumToBytes(C.dbm_nextkey(dbm.cDbm)) {
-		err := callback(key)
+	for datum, err := C.dbm_firstkey(dbm.cDbm); datum.dptr != nil; datum, err = C.dbm_nextkey(dbm.cDbm) {
+		if err != nil {
+			return err
+		}
+		key := datumToBytes(datum)
+		err = callback(key)
 		if err != nil {
 			return err
 		}
@@ -214,19 +177,43 @@ func (dbm *DBM) ItemsCallback(callback func(key, value []byte) error) error {
 	})
 }
 
-type DBMItem struct {
+type Item struct {
 	Key   []byte
 	Value []byte
 }
 
-func (dbm *DBM) Items() []DBMItem {
-	items := []DBMItem{}
+type Items []Item
+
+func (items Items) Len() int {
+	return len(items)
+}
+
+func (items Items) Swap(i, j int) {
+	items[i], items[j] = items[j], items[i]
+}
+
+func (items Items) Less(i, j int) bool {
+	return bytes.Compare(items[i].Key, items[j].Key) == -1
+}
+
+func (dbm *DBM) Items() Items {
+	items := Items{}
 	_ = dbm.ItemsCallback(func(key, value []byte) error {
-		items = append(items, DBMItem{
+		items = append(items, Item{
 			Key:   key,
 			Value: value,
 		})
 		return nil
 	})
 	return items
+}
+
+func (dbm *DBM) Update(items Items) error {
+	for _, item := range items {
+		err := dbm.Replace(item.Key, item.Value)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
