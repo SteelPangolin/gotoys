@@ -78,8 +78,8 @@ func (dir *OsDir) Resolve(relpath string) (VfsNode, error) {
 	return node, nil
 }
 
-func (dir *OsDir) MimeType() string {
-	return InodeDirectory
+func (dir *OsDir) MimeType() (string, map[string]string) {
+	return InodeDirectory, nil
 }
 
 type OsFile struct {
@@ -94,18 +94,18 @@ func NewOsFile(path string, fi os.FileInfo) *OsFile {
 	return node
 }
 
-func (file *OsFile) Reader() (io.Reader, error) {
+func (file *OsFile) Open() (io.ReadCloser, error) {
 	return os.Open(file.Path)
 }
 
-func (file *OsFile) MimeType() string {
+func (file *OsFile) MimeType() (string, map[string]string) {
 	// special file types
-	if mimetype := file.inodeMimeType(); mimetype != OctetStream {
-		return mimetype
+	if mediatype := file.inodeMediaType(); mediatype != OctetStream {
+		return mediatype, nil
 	}
 
-	mimetype := MagicMimeTypeFromFile(file.Path)
-	return mimetype
+	mediatype, params := MagicMimeTypeFromFile(file.Path)
+	return mediatype, params
 }
 
 type modeMime struct {
@@ -133,7 +133,7 @@ var modeMimes = []modeMime{
 	},
 }
 
-func (file *OsFile) inodeMimeType() string {
+func (file *OsFile) inodeMediaType() string {
 	mode := file.Mode()
 	for _, entry := range modeMimes {
 		if mode&entry.mode == entry.mode {

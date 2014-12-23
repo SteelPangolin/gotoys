@@ -18,12 +18,9 @@ func NewZipArchive(file VfsFileNode) VfsDirFileNode {
 	arc.VfsFileNode = file
 
 	// attempt to add Zip file comment to attrs
-	reader, err := arc.Reader()
+	reader, err := arc.Open()
 	if err != nil {
-		closer, ok := reader.(io.Closer)
-		if ok {
-			defer closer.Close()
-		}
+		defer reader.Close()
 
 		readerat, ok := reader.(io.ReaderAt)
 		if ok {
@@ -38,19 +35,15 @@ func NewZipArchive(file VfsFileNode) VfsDirFileNode {
 }
 
 func (arc *ZipArchive) nodes() ([]zipNode, error) {
-	reader, err := arc.Reader()
+	reader, err := arc.Open()
 	if err != nil {
 		return nil, err
 	}
-
-	closer, ok := reader.(io.Closer)
-	if ok {
-		defer closer.Close()
-	}
+	defer reader.Close()
 
 	readerat, ok := reader.(io.ReaderAt)
 	if !ok {
-		err := fmt.Errorf("$T's Reader() doesn't implement readat()",
+		err := fmt.Errorf("%T's Reader() doesn't implement readat()",
 			arc.VfsFileNode)
 		return nil, err
 	}
@@ -176,11 +169,11 @@ func (node *ZipFile) ModTime() time.Time {
 	return node.f.FileInfo().ModTime()
 }
 
-func (node *ZipFile) MimeType() string {
-	return OctetStream // TODO
+func (node *ZipFile) MimeType() (string, map[string]string) {
+	return OctetStream, nil // TODO
 }
 
-func (node *ZipFile) Reader() (io.Reader, error) {
+func (node *ZipFile) Open() (io.ReadCloser, error) {
 	return node.f.Open()
 }
 
@@ -218,8 +211,8 @@ func (node *ZipDir) ModTime() time.Time {
 	return node.fh.FileInfo().ModTime()
 }
 
-func (node *ZipDir) MimeType() string {
-	return InodeDirectory
+func (node *ZipDir) MimeType() (string, map[string]string) {
+	return InodeDirectory, nil
 }
 
 func (node *ZipDir) Children() ([]VfsNode, error) {
@@ -264,8 +257,8 @@ func (node *ImplicitZipDir) ModTime() time.Time {
 	return node.arc.ModTime()
 }
 
-func (node *ImplicitZipDir) MimeType() string {
-	return InodeDirectory
+func (node *ImplicitZipDir) MimeType() (string, map[string]string) {
+	return InodeDirectory, nil
 }
 
 func (node *ImplicitZipDir) Children() ([]VfsNode, error) {
