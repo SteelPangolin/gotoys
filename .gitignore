@@ -1,2 +1,10 @@
 .vendor
 vendor
+
+._*
+.DS_Store
+
+main/main
+
+pdf/pdf
+pdf/*.dat

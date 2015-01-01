@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"compress/zlib"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"os"
 )
 
 type Token interface {
@@ -22,6 +25,7 @@ const (
 	ModeSymbol
 	ModeHex
 	ModeStream
+	ModeStreamStart
 	ModeString
 )
 
@@ -102,6 +106,25 @@ var AttrsEnd = &OperatorToken{">>"}
 var ArrayStart = &OperatorToken{"["}
 var ArrayEnd = &OperatorToken{"]"}
 
+func isWhitespace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+func isDigit(c byte) bool {
+	return '0' <= c && c <= '9'
+}
+
+func isLetter(c byte) bool {
+	return ('A' <= c && c <= 'Z') || ('a' <= c && c <= 'z')
+}
+
+func isHexDigit(c byte) bool {
+	return isDigit(c) || ('A' <= c && c <= 'F') || ('a' <= c && c <= 'f')
+}
+
+var streamBytes []byte = []byte("stream")
+var endstreamBytes []byte = []byte("endstream")
+
 func lex(buf []byte) ([]Token, error) {
 	mode := ModeStart
 	tokenBuf := []byte{}
@@ -111,7 +134,7 @@ func lex(buf []byte) ([]Token, error) {
 		switch mode {
 		case ModeStart:
 			switch {
-			case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			case isWhitespace(c):
 				pos++
 			case c == '%':
 				mode = ModeMeta
@@ -120,11 +143,9 @@ func lex(buf []byte) ([]Token, error) {
 				mode = ModeInt
 				tokenBuf = append(tokenBuf, c)
 				pos++
-			case '0' <= c && c <= '9':
+			case isDigit(c):
 				mode = ModeInt
-			case 'a' <= c && c <= 'z':
-				fallthrough
-			case 'A' <= c && c <= 'Z':
+			case isLetter(c):
 				mode = ModeWord
 			case c == '<':
 				mode = ModeLT
@@ -145,11 +166,11 @@ func lex(buf []byte) ([]Token, error) {
 				mode = ModeString
 				pos++
 			default:
-				return tokens, fmt.Errorf("ModeStart: Unexpected %q at pos %d\n", c, pos)
+				return tokens, fmt.Errorf("ModeStart: Unexpected %q at pos %d", c, pos)
 			}
 		case ModeMeta:
 			switch {
-			case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			case isWhitespace(c):
 				tokens = append(tokens, &MetaToken{tokenBuf})
 				tokenBuf = []byte{}
 				mode = ModeStart
@@ -159,7 +180,7 @@ func lex(buf []byte) ([]Token, error) {
 			}
 		case ModeInt:
 			switch {
-			case '0' <= c && c <= '9':
+			case isDigit(c):
 				tokenBuf = append(tokenBuf, c)
 				pos++
 			case c == '.':
@@ -173,11 +194,11 @@ func lex(buf []byte) ([]Token, error) {
 			}
 		case ModeFloat:
 			switch {
-			case '0' <= c && c <= '9':
+			case isDigit(c):
 				tokenBuf = append(tokenBuf, c)
 				pos++
 			case c == '.':
-				return tokens, fmt.Errorf("ModeFloat: Unexpected %q at pos %d\n", c, pos)
+				return tokens, fmt.Errorf("ModeFloat: Unexpected %q at pos %d", c, pos)
 			default:
 				tokens = append(tokens, &FloatToken{tokenBuf})
 				tokenBuf = []byte{}
@@ -185,20 +206,15 @@ func lex(buf []byte) ([]Token, error) {
 			}
 		case ModeWord:
 			switch {
-			case 'a' <= c && c <= 'z':
-				fallthrough
-			case 'A' <= c && c <= 'Z':
+			case isLetter(c):
 				tokenBuf = append(tokenBuf, c)
 				pos++
 			default:
 				word := &WordToken{tokenBuf}
 				tokens = append(tokens, word)
 				tokenBuf = []byte{}
-				if bytes.Equal(word.buf, []byte("stream")) {
-					mode = ModeStream
-					// skip CRLF before start of stream data
-					pos++
-					pos++
+				if bytes.Equal(word.buf, streamBytes) {
+					mode = ModeStreamStart
 				} else {
 					mode = ModeStart
 				}
@@ -209,12 +225,10 @@ func lex(buf []byte) ([]Token, error) {
 				tokens = append(tokens, AttrsStart)
 				mode = ModeStart
 				pos++
-			case 'a' <= c && c <= 'f':
-				fallthrough
-			case '0' <= c && c <= '9':
+			case isHexDigit(c):
 				mode = ModeHex
 			default:
-				return tokens, fmt.Errorf("ModeLT: Unexpected %q at pos %d\n", c, pos)
+				return tokens, fmt.Errorf("ModeLT: Unexpected %q at pos %d", c, pos)
 			}
 		case ModeGT:
 			switch {
@@ -223,13 +237,11 @@ func lex(buf []byte) ([]Token, error) {
 				mode = ModeStart
 				pos++
 			default:
-				return tokens, fmt.Errorf("ModeGT: Unexpected %q at pos %d\n", c, pos)
+				return tokens, fmt.Errorf("ModeGT: Unexpected %q at pos %d", c, pos)
 			}
 		case ModeHex:
 			switch {
-			case 'a' <= c && c <= 'f':
-				fallthrough
-			case '0' <= c && c <= '9':
+			case isHexDigit(c):
 				tokenBuf = append(tokenBuf, c)
 				pos++
 			case c == '>':
@@ -238,15 +250,13 @@ func lex(buf []byte) ([]Token, error) {
 				mode = ModeStart
 				pos++
 			default:
-				return tokens, fmt.Errorf("ModeHex: Unexpected %q at pos %d\n", c, pos)
+				return tokens, fmt.Errorf("ModeHex: Unexpected %q at pos %d", c, pos)
 			}
 		case ModeSymbol:
 			switch {
-			case 'a' <= c && c <= 'z':
+			case isLetter(c):
 				fallthrough
-			case 'A' <= c && c <= 'Z':
-				fallthrough
-			case '0' <= c && c <= '9':
+			case isDigit(c):
 				fallthrough
 			case c == '_' || c == '-' || c == ',':
 				tokenBuf = append(tokenBuf, c)
@@ -256,19 +266,39 @@ func lex(buf []byte) ([]Token, error) {
 				tokenBuf = []byte{}
 				mode = ModeStart
 			}
+		case ModeStreamStart:
+			switch {
+			case isWhitespace(c):
+				pos++
+			default:
+				mode = ModeStream
+			}
 		case ModeStream:
-			tokenBuf = append(tokenBuf, c)
-			pos++
-			if c == '\r' {
-				endstream := []byte("\rendstream\r")
-				tokenBufTail := tokenBuf[len(tokenBuf)-len(endstream):]
-				if bytes.Equal(tokenBufTail, endstream) {
-					tokenBuf = tokenBuf[:len(tokenBuf)-len(endstream)]
-					tokens = append(tokens, &StreamToken{tokenBuf})
-					tokens = append(tokens, &WordToken{[]byte("endstream")})
-					tokenBuf = []byte{}
-					mode = ModeStart
+			// TODO: doesn't use object's stream length info
+		StreamSwitch:
+			switch {
+			case isWhitespace(c):
+				// look ahead for endstream token
+				for lPos := pos + 1; ; lPos++ {
+					if lPos >= len(buf) {
+						return tokens, fmt.Errorf("ModeStream: EOF while looking for endstream from pos %d", pos)
+					}
+					if isWhitespace(buf[lPos]) {
+						continue
+					}
+					if bytes.HasPrefix(buf[lPos:], endstreamBytes) {
+						tokens = append(tokens, &StreamToken{tokenBuf})
+						tokenBuf = []byte{}
+						mode = ModeStart
+						break StreamSwitch
+					}
+					// if we don't see an endstream, c is part of the stream data
+					break
 				}
+				fallthrough
+			default:
+				tokenBuf = append(tokenBuf, c)
+				pos++
 			}
 		case ModeString:
 			switch {
@@ -282,10 +312,29 @@ func lex(buf []byte) ([]Token, error) {
 				pos++
 			}
 		default:
-			return tokens, fmt.Errorf("Mode %d: Unexpected %q at pos %d\n", mode, c, pos)
+			return tokens, fmt.Errorf("Mode %d: Unexpected %q at pos %d", mode, c, pos)
 		}
 	}
+	if mode != ModeStart {
+		return tokens, fmt.Errorf("Mode %d: Unfinished business", mode)
+	}
 	return tokens, nil
+}
+
+func saveStream(stream *StreamToken, path string) error {
+	// TODO: check the filter type instead of assuming Flate
+	buf := bytes.NewBuffer(stream.buf)
+	r, err := zlib.NewReader(buf)
+	if err != nil {
+		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(f, r)
+	return err
 }
 
 func main() {
@@ -302,6 +351,18 @@ func main() {
 		fmt.Printf("%s\n", token)
 	}
 	if err != nil {
-		fmt.Printf("error: %s\n", err)
+		fmt.Printf("lexer error: %s\n", err)
+	}
+
+	streamIdx := 1
+	for _, token := range tokens {
+		if stream, ok := token.(*StreamToken); ok {
+			streamPath := fmt.Sprintf("stream_%04d.dat", streamIdx)
+			streamIdx++
+			err := saveStream(stream, streamPath)
+			if err != nil {
+				fmt.Printf("error saving stream %s: %v\n", streamPath, err)
+			}
+		}
 	}
 }
