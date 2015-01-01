@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 )
 
 type Token interface {
@@ -41,35 +42,36 @@ func (t *MetaToken) String() string {
 }
 
 type IntToken struct {
-	buf []byte
+	val int64
 }
 
 func (t *IntToken) String() string {
-	return fmt.Sprintf("Int %q", t.buf)
+	return fmt.Sprintf("Int %d", t.val)
 }
 
 type FloatToken struct {
-	buf []byte
+	val float64
+	// TODO: retain original, or maybe number of digits, for round trips
 }
 
 func (t *FloatToken) String() string {
-	return fmt.Sprintf("Float %q", t.buf)
+	return fmt.Sprintf("Float %f", t.val)
 }
 
 type WordToken struct {
-	buf []byte
+	val string
 }
 
 func (t *WordToken) String() string {
-	return fmt.Sprintf("Word %q", t.buf)
+	return fmt.Sprintf("Word %q", t.val)
 }
 
 type SymbolToken struct {
-	buf []byte
+	val string
 }
 
 func (t *SymbolToken) String() string {
-	return fmt.Sprintf("Symbol %q", t.buf)
+	return fmt.Sprintf("Symbol %q", t.val)
 }
 
 type HexToken struct {
@@ -89,11 +91,11 @@ func (t *StreamToken) String() string {
 }
 
 type StringToken struct {
-	buf []byte
+	val string
 }
 
 func (t *StringToken) String() string {
-	return fmt.Sprintf("String %q", t.buf)
+	return fmt.Sprintf("String %q", t.val)
 }
 
 var AttrsStart = &OperatorToken{"<<"}
@@ -116,9 +118,6 @@ func isLetter(c byte) bool {
 func isHexDigit(c byte) bool {
 	return isDigit(c) || ('A' <= c && c <= 'F') || ('a' <= c && c <= 'f')
 }
-
-var streamBytes []byte = []byte("stream")
-var endstreamBytes []byte = []byte("endstream")
 
 func lex(buf []byte) ([]Token, error) {
 	mode := ModeStart
@@ -183,7 +182,11 @@ func lex(buf []byte) ([]Token, error) {
 				mode = ModeFloat
 				pos++
 			default:
-				tokens = append(tokens, &IntToken{tokenBuf})
+				value, err := strconv.ParseInt(string(tokenBuf), 10, 64)
+				if err != nil {
+					return tokens, err
+				}
+				tokens = append(tokens, &IntToken{value})
 				tokenBuf = []byte{}
 				mode = ModeStart
 			}
@@ -195,7 +198,11 @@ func lex(buf []byte) ([]Token, error) {
 			case c == '.':
 				return tokens, fmt.Errorf("ModeFloat: Unexpected %q at pos %d", c, pos)
 			default:
-				tokens = append(tokens, &FloatToken{tokenBuf})
+				value, err := strconv.ParseFloat(string(tokenBuf), 64)
+				if err != nil {
+					return tokens, err
+				}
+				tokens = append(tokens, &FloatToken{value})
 				tokenBuf = []byte{}
 				mode = ModeStart
 			}
@@ -205,10 +212,10 @@ func lex(buf []byte) ([]Token, error) {
 				tokenBuf = append(tokenBuf, c)
 				pos++
 			default:
-				word := &WordToken{tokenBuf}
+				word := &WordToken{string(tokenBuf)}
 				tokens = append(tokens, word)
 				tokenBuf = []byte{}
-				if bytes.Equal(word.buf, streamBytes) {
+				if word.val == "stream" {
 					mode = ModeStreamStart
 				} else {
 					mode = ModeStart
@@ -257,9 +264,20 @@ func lex(buf []byte) ([]Token, error) {
 				tokenBuf = append(tokenBuf, c)
 				pos++
 			default:
-				tokens = append(tokens, &SymbolToken{tokenBuf})
+				tokens = append(tokens, &SymbolToken{string(tokenBuf)})
 				tokenBuf = []byte{}
 				mode = ModeStart
+			}
+		case ModeString:
+			switch {
+			case c == ')':
+				tokens = append(tokens, &StringToken{string(tokenBuf)})
+				tokenBuf = []byte{}
+				mode = ModeStart
+				pos++
+			default:
+				tokenBuf = append(tokenBuf, c)
+				pos++
 			}
 		case ModeStreamStart:
 			switch {
@@ -281,7 +299,7 @@ func lex(buf []byte) ([]Token, error) {
 					if isWhitespace(buf[lPos]) {
 						continue
 					}
-					if bytes.HasPrefix(buf[lPos:], endstreamBytes) {
+					if bytes.HasPrefix(buf[lPos:], []byte("endstream")) {
 						tokens = append(tokens, &StreamToken{tokenBuf})
 						tokenBuf = []byte{}
 						mode = ModeStart
@@ -291,17 +309,6 @@ func lex(buf []byte) ([]Token, error) {
 					break
 				}
 				fallthrough
-			default:
-				tokenBuf = append(tokenBuf, c)
-				pos++
-			}
-		case ModeString:
-			switch {
-			case c == ')':
-				tokens = append(tokens, &StringToken{tokenBuf})
-				tokenBuf = []byte{}
-				mode = ModeStart
-				pos++
 			default:
 				tokenBuf = append(tokenBuf, c)
 				pos++

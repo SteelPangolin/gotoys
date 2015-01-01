@@ -1,15 +1,12 @@
 package main
 
 import (
-	"bytes"
-	"compress/zlib"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
-	"os"
 )
 
+/*
 func saveStream(stream *StreamToken, path string) error {
 	// TODO: check the filter type instead of assuming Flate
 	buf := bytes.NewBuffer(stream.buf)
@@ -25,6 +22,7 @@ func saveStream(stream *StreamToken, path string) error {
 	_, err = io.Copy(f, r)
 	return err
 }
+*/
 
 func main() {
 	flag.Parse()
@@ -36,22 +34,15 @@ func main() {
 	}
 
 	tokens, err := lex(buf)
-	for _, token := range tokens {
-		fmt.Printf("%s\n", token)
-	}
 	if err != nil {
 		fmt.Printf("lexer error: %s\n", err)
+		panic(err)
 	}
 
-	streamIdx := 1
-	for _, token := range tokens {
-		if stream, ok := token.(*StreamToken); ok {
-			streamPath := fmt.Sprintf("stream_%04d.dat", streamIdx)
-			streamIdx++
-			err := saveStream(stream, streamPath)
-			if err != nil {
-				fmt.Printf("error saving stream %s: %v\n", streamPath, err)
-			}
-		}
+	doc, stack, err := parse(tokens)
+	fmt.Printf("doc: %v\n", doc)
+	if err != nil || len(stack) > 0 {
+		fmt.Printf("stack: %v\n", stack)
+		fmt.Printf("parser error: %s\n", err)
 	}
 }
