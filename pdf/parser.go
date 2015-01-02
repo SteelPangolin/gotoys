@@ -5,11 +5,48 @@ import (
 )
 
 type Document struct {
-	Objects map[Ref]interface{}
-	Attrs   map[string]interface{}
+	Objects map[Ref]PDFValue
+	Attrs   PDFMap
+}
+
+// An object reference can be used almost anywhere in a PDF
+type PDFValue interface {
+	Val() interface{}
+}
+
+type PDFInt int64
+
+func (o PDFInt) Val() interface{} {
+	return int64(o)
+}
+
+type PDFFloat float64
+
+func (o PDFFloat) Val() interface{} {
+	return float64(o)
+}
+
+type PDFString string
+
+func (o PDFString) Val() interface{} {
+	return string(o)
+}
+
+type PDFList []PDFValue
+
+func (o PDFList) Val() interface{} {
+	return o
+}
+
+// TODO: I really hope map keys can't be references
+type PDFMap map[string]PDFValue
+
+func (o PDFMap) Val() interface{} {
+	return o
 }
 
 type Ref struct {
+	Doc      *Document
 	Num, Gen int64
 }
 
@@ -17,22 +54,34 @@ func (r Ref) String() string {
 	return fmt.Sprintf("Ref %d %d", r.Num, r.Gen)
 }
 
-type Object struct {
-	Attrs map[string]interface{}
+func (r Ref) Val() interface{} {
+	if obj, ok := r.Doc.Objects[r]; ok {
+		return obj.Val()
+	}
+	panic(fmt.Errorf("Missing object reference: %s", r))
+	// TODO: PDF standard says dangling refs should be treated as nulls, not errors
+}
+
+// PDF stream object. Bytes, but may be compressed or otherwise encoded.
+type Stream struct {
+	buf   []byte
+	attrs PDFMap
+}
+
+func (o Stream) String() string {
+	return fmt.Sprintf("Stream (%d bytes)", len(o.buf))
+}
+
+func (o Stream) Val() interface{} {
+	return nil
 }
 
 // Read an object number and generation from a given index.
-func parseRef(stack []interface{}, index int) (Ref, error) {
-	ref := Ref{}
-	if num, ok := stack[index].(int64); ok {
-		ref.Num = num
-	} else {
-		return ref, fmt.Errorf("Wrong type for object ref number")
-	}
-	if gen, ok := stack[index+1].(int64); ok {
-		ref.Gen = gen
-	} else {
-		return ref, fmt.Errorf("Wrong type for object ref generation")
+func parseRef(doc *Document, stack []interface{}, index int) (Ref, error) {
+	ref := Ref{
+		Num: stack[index].(PDFInt).Val().(int64),
+		Gen: stack[index+1].(PDFInt).Val().(int64),
+		Doc: doc,
 	}
 	return ref, nil
 }
@@ -48,72 +97,82 @@ func ctxPop(contextStack *[]int) int {
 	return index
 }
 
-func parse(tokens []Token) (Document, []interface{}, error) {
-	doc := Document{
-		Objects: map[Ref]interface{}{},
+func parse(tokens []Token) (doc Document, err error) {
+	doc = Document{
+		Objects: map[Ref]PDFValue{},
 	}
 	stack := []interface{}{}
+	defer func() {
+		e := recover()
+		if e != nil {
+			if len(stack) > 0 {
+				fmt.Printf("stack = %v\n", stack)
+			}
+			panic(e)
+			// TODO: more useful error object
+		}
+	}()
 	contextStack := []int{}
 	for pos := 0; pos < len(tokens); pos++ {
 		stack = append(stack, tokens[pos])
 		end := len(stack) - 1
 
 		switch last := stack[end].(type) {
-		case *StreamToken:
-			// TODO: drop for now
-			stack = stack[:end]
+		// TODO: drop comments for now
 		case *MetaToken:
 			stack = stack[:end]
 
+		// wrap primitives
 		case *IntToken:
-			// unwrap
-			stack[end] = last.val
+			stack[end] = PDFInt(last.val)
 		case *FloatToken:
-			stack[end] = last.val
+			stack[end] = PDFFloat(last.val)
 		case *SymbolToken:
-			stack[end] = last.val
+			stack[end] = PDFString(last.val)
 		case *StringToken:
-			stack[end] = last.val
+			stack[end] = PDFString(last.val)
 		case *HexToken:
-			stack[end] = last.buf
+			stack[end] = PDFString(last.buf)
+
+		case *StreamToken:
+			// leave as is
 
 		case *OperatorToken:
 			switch last.op {
+			// list
 			case "[":
 				ctxPush(&contextStack, end)
 			case "]":
 				start := ctxPop(&contextStack)
 				if (end - start + 1) < 2 {
-					return doc, stack, fmt.Errorf("Not enough items for list")
+					panic(fmt.Errorf("Not enough items for list"))
 				}
 
-				list := []interface{}{}
+				list := PDFList{}
 				for i := start + 1; i < end; i++ {
-					list = append(list, stack[i])
+					list = append(list, stack[i].(PDFValue))
 				}
 
 				// put the new list on top of the stack
 				stack = stack[:start+1]
 				stack[start] = list
 
+			// map
 			case "<<":
 				ctxPush(&contextStack, end)
 			case ">>":
 				start := ctxPop(&contextStack)
 				if (end - start + 1) < 2 {
-					return doc, stack, fmt.Errorf("Not enough items for map")
+					panic(fmt.Errorf("Not enough items for map"))
 				}
 				if (end-start+1)%2 != 0 {
-					return doc, stack, fmt.Errorf("Map needs an even number of items")
+					panic(fmt.Errorf("Map needs an even number of items"))
 				}
 
-				m := map[string]interface{}{}
+				m := PDFMap{}
 				for i := start + 1; i < end; i += 2 {
-					if key, ok := stack[i].(string); ok {
-						m[key] = stack[i+1]
-					} else {
-						return doc, stack, fmt.Errorf("Map key %d must be a string", i)
-					}
+					key := stack[i].(PDFValue).Val().(string)
+					m[key] = stack[i+1].(PDFValue)
 				}
 
 				// put the new map on top of the stack
@@ -121,7 +180,7 @@ func parse(tokens []Token) (Document, []interface{}, error) {
 				stack[start] = m
 
 			default:
-				return doc, stack, fmt.Errorf("Unknown operator %s", last.op)
+				panic(fmt.Errorf("Unknown operator %s", last.op))
 			}
 
 		case *WordToken:
@@ -129,43 +188,53 @@ func parse(tokens []Token) (Document, []interface{}, error) {
 			case "stream":
 				fallthrough
 			case "endstream":
-				// ignore these
+				// ignore these; we already turned the stuff between them into StreamTokens
 				stack = stack[:end]
 
 			case "R":
 				// object reference: num gen R
-				if len(stack) < 3 {
-					return doc, stack, fmt.Errorf("Not enough items for object ref")
+				start := end - 2
+				if start < 0 {
+					panic(fmt.Errorf("Not enough items for object ref"))
 				}
-				ref, err := parseRef(stack, end-2)
+				ref, err := parseRef(&doc, stack, start)
 				if err != nil {
-					return doc, stack, err
+					return doc, err
 				}
-				stack[end-2] = ref
-				stack = stack[:end-1]
+				stack = stack[:start+1]
+				stack[start] = ref
 
 			case "obj":
-				// num gen obj attrs? stream? endobj
-				ctxPush(&contextStack, end-2)
+				// num gen obj attrs? value endobj
+				start := end - 2
+				if start < 0 {
+					panic(fmt.Errorf("Not enough items for object ref"))
+				}
+				ctxPush(&contextStack, start)
 			case "endobj":
 				start := ctxPop(&contextStack)
-				if (end - start + 1) < 4 {
-					return doc, stack, fmt.Errorf("Not enough items for object")
+				if (end - start + 1) < 5 {
+					panic(fmt.Errorf("Not enough items for object"))
+				}
+				if (end - start + 1) > 6 {
+					panic(fmt.Errorf("Too many items for object"))
 				}
 
-				ref, err := parseRef(stack, start)
+				ref, err := parseRef(&doc, stack, start)
 				if err != nil {
-					return doc, stack, err
+					return doc, err
 				}
 
-				obj := Object{}
-				if (end - start + 1) > 4 {
-					// object probably has an attribute dict
-					if attrs, ok := stack[start+3].(map[string]interface{}); ok {
-						obj.Attrs = attrs
-					} else {
-						return doc, stack, fmt.Errorf("Wrong type for object attrs")
+				var obj PDFValue
+				if (end - start + 1) > 5 {
+					// object is a stream with an attribute map
+					obj = Stream{
+						attrs: stack[start+3].(PDFMap),
+						buf:   stack[start+4].(*StreamToken).buf,
 					}
+				} else {
+					// object is a map, list, scalar, or ref
+					obj = stack[start+3].(PDFValue)
 				}
 
 				// move object from stack to document
@@ -176,13 +245,13 @@ func parse(tokens []Token) (Document, []interface{}, error) {
 				// look ahead to discover the number of xref entries
 				xrefEntryCountIdx := pos + 2
 				if xrefEntryCountIdx >= len(tokens) {
-					return doc, stack, fmt.Errorf("xref table truncated by EOF")
+					panic(fmt.Errorf("xref table truncated by EOF"))
 				}
 				var xrefEntryCount int
 				if xrefEntryCountToken, ok := tokens[xrefEntryCountIdx].(*IntToken); ok {
 					xrefEntryCount = int(xrefEntryCountToken.val)
 				} else {
-					return doc, stack, fmt.Errorf("Wrong type for xref entry count")
+					panic(fmt.Errorf("Wrong type for xref entry count"))
 				}
 				// skip over the xref table, which is useless if reading the entire file
 				stack = stack[:end]
@@ -194,15 +263,11 @@ func parse(tokens []Token) (Document, []interface{}, error) {
 			case "startxref":
 				start := ctxPop(&contextStack)
 				if (end - start + 1) < 3 {
-					return doc, stack, fmt.Errorf("Not enough items for trailer")
+					panic(fmt.Errorf("Not enough items for trailer"))
 				}
 
 				// set document attributes from trailer
-				if attrs, ok := stack[start+1].(map[string]interface{}); ok {
-					doc.Attrs = attrs
-				} else {
-					return doc, stack, fmt.Errorf("Wrong type for trailer attrs")
-				}
+				doc.Attrs = stack[start+1].(PDFMap)
 
 				// remove trailer from stack
 				stack = stack[:start]
@@ -211,9 +276,9 @@ func parse(tokens []Token) (Document, []interface{}, error) {
 				pos++
 
 			default:
-				return doc, stack, fmt.Errorf("Unknown word %s", last.val)
+				panic(fmt.Errorf("Unknown word %s", last.val))
 			}
 		}
 	}
-	return doc, stack, nil
+	return doc, nil
 }

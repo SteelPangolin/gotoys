@@ -39,10 +39,6 @@ func main() {
 		panic(err)
 	}
 
-	doc, stack, err := parse(tokens)
+	doc, err := parse(tokens)
 	fmt.Printf("doc: %v\n", doc)
-	if err != nil || len(stack) > 0 {
-		fmt.Printf("stack: %v\n", stack)
-		fmt.Printf("parser error: %s\n", err)
-	}
 }
