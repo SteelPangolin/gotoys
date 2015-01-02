@@ -6,12 +6,25 @@ import (
 
 type Document struct {
 	Objects map[Ref]PDFValue
-	Attrs   PDFMap
+	// linearized PDFs and incrementally updated PDFs have multiple trailers
+	Trailers []PDFMap
 }
 
 // An object reference can be used almost anywhere in a PDF
 type PDFValue interface {
 	Val() interface{}
+}
+
+type PDFNull struct{}
+
+func (o PDFNull) Val() interface{} {
+	return nil
+}
+
+type PDFBool bool
+
+func (o PDFBool) Val() interface{} {
+	return bool(o)
 }
 
 type PDFInt int64
@@ -60,20 +73,6 @@ func (r Ref) Val() interface{} {
 	}
 	panic(fmt.Errorf("Missing object reference: %s", r))
 	// TODO: PDF standard says dangling refs should be treated as nulls, not errors
-}
-
-// PDF stream object. Bytes, but may be compressed or otherwise encoded.
-type Stream struct {
-	buf   []byte
-	attrs PDFMap
-}
-
-func (o Stream) String() string {
-	return fmt.Sprintf("Stream (%d bytes)", len(o.buf))
-}
-
-func (o Stream) Val() interface{} {
-	return nil
 }
 
 // Read an object number and generation from a given index.
@@ -191,6 +190,13 @@ func parse(tokens []Token) (doc Document, err error) {
 				// ignore these; we already turned the stuff between them into StreamTokens
 				stack = stack[:end]
 
+			case "null":
+				stack[end] = PDFNull{}
+			case "false":
+				stack[end] = PDFBool(false)
+			case "true":
+				stack[end] = PDFBool(true)
+
 			case "R":
 				// object reference: num gen R
 				start := end - 2
@@ -266,8 +272,8 @@ func parse(tokens []Token) (doc Document, err error) {
 					panic(fmt.Errorf("Not enough items for trailer"))
 				}
 
-				// set document attributes from trailer
-				doc.Attrs = stack[start+1].(PDFMap)
+				// add to document trailers list
+				doc.Trailers = append(doc.Trailers, stack[start+1].(PDFMap))
 
 				// remove trailer from stack
 				stack = stack[:start]
