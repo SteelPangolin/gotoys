@@ -6,20 +6,18 @@ import (
 	"io/ioutil"
 )
 
-func mustParse(buf []byte) Document {
+func parseDoc(buf []byte) Document {
+	dp := &DocumentParser{}
+
 	tokens, err := lex(buf)
 	if err != nil {
 		fmt.Printf("lexer error: %s\n", err)
 		panic(err)
 	}
 
-	doc, err := parse(tokens)
-	if err != nil {
-		fmt.Printf("parser error: %s\n", err)
-		panic(err)
-	}
+	parse(tokens, dp)
 
-	return doc
+	return dp.Doc
 }
 
 func findPages(node PDFMap) []PDFMap {
@@ -66,7 +64,7 @@ func main() {
 		panic(err)
 	}
 
-	doc := mustParse(buf)
+	doc := parseDoc(buf)
 	for _, trailer := range doc.Trailers {
 		if rootRef, hasRoot := trailer["Root"]; hasRoot {
 			root := rootRef.Val().(PDFMap)
