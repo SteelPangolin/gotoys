@@ -23,6 +23,7 @@ const (
 	ModeStream
 	ModeStreamStart
 	ModeString
+	ModeStringEscape
 )
 
 type OperatorToken struct {
@@ -208,7 +209,7 @@ func lex(buf []byte) ([]Token, error) {
 			}
 		case ModeWord:
 			switch {
-			case isLetter(c):
+			case isLetter(c) || c == '*':
 				tokenBuf = append(tokenBuf, c)
 				pos++
 			default:
@@ -260,7 +261,7 @@ func lex(buf []byte) ([]Token, error) {
 				fallthrough
 			case isDigit(c):
 				fallthrough
-			case c == '_' || c == '-' || c == ',':
+			case c == '_' || c == '-' || c == ',' || c == '*':
 				tokenBuf = append(tokenBuf, c)
 				pos++
 			default:
@@ -270,6 +271,9 @@ func lex(buf []byte) ([]Token, error) {
 			}
 		case ModeString:
 			switch {
+			case c == '\\':
+				mode = ModeStringEscape
+				pos++
 			case c == ')':
 				tokens = append(tokens, &StringToken{string(tokenBuf)})
 				tokenBuf = []byte{}
@@ -277,6 +281,16 @@ func lex(buf []byte) ([]Token, error) {
 				pos++
 			default:
 				tokenBuf = append(tokenBuf, c)
+				pos++
+			}
+		case ModeStringEscape:
+			switch {
+			case isWhitespace(c):
+				mode = ModeString
+				pos++
+			default:
+				tokenBuf = append(tokenBuf, c)
+				mode = ModeString
 				pos++
 			}
 		case ModeStreamStart:

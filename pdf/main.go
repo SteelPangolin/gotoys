@@ -20,6 +20,20 @@ func parseDoc(buf []byte) Document {
 	return dp.Doc
 }
 
+func parseContent(buf []byte) []Command {
+	cp := &ContentParser{}
+
+	tokens, err := lex(buf)
+	if err != nil {
+		fmt.Printf("lexer error: %s\n", err)
+		panic(err)
+	}
+
+	parse(tokens, cp)
+
+	return cp.Commands
+}
+
 func findPages(node PDFMap) []PDFMap {
 	if node["Type"].Val().(string) == "Page" {
 		return []PDFMap{node}
@@ -55,6 +69,15 @@ func getContents(page PDFMap) [][]byte {
 	}
 }
 
+func extractText(commands []Command) {
+	for _, command := range commands {
+		if command.Word == "Tj" {
+			text := command.Operands[0].(PDFString).Val().(string)
+			fmt.Printf("%s\n", text)
+		}
+	}
+}
+
 func main() {
 	flag.Parse()
 	path := flag.Arg(0)
@@ -72,8 +95,9 @@ func main() {
 			for _, page := range pages {
 				for _, contents := range getContents(page) {
 					func() {
-						fmt.Printf("%q\n", contents)
-						return
+						commands := parseContent(contents)
+						extractText(commands)
+						fmt.Printf("\n")
 					}()
 				}
 			}
